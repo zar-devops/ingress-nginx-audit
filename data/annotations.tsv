@@ -1,0 +1,104 @@
+# annotation (without the nginx.ingress.kubernetes.io/ prefix)	class	target	note
+# class: DIRECT = core Gateway API (HTTPRoute fields/filters)
+#        POLICY = needs an implementation policy (Envoy Gateway examples in manifests/)
+#        REDESIGN = no equivalent, plan a different approach
+#        INFO = usually no action needed, but check behaviour
+rewrite-target	DIRECT	HTTPRoute filter URLRewrite (ReplacePrefixMatch / ReplaceFullPath)	Regex capture groups ($1, $2) are not core. Use Envoy Gateway HTTPRouteFilter with regex rewrite or restructure paths.
+use-regex	POLICY	HTTPRoute path type RegularExpression	RegularExpression matching is implementation-specific. Test every regex path; nginx regex and Envoy RE2 differ (no lookaheads).
+ssl-redirect	DIRECT	HTTPRoute on the HTTP listener with RequestRedirect scheme https	ingress-nginx redirects by default when TLS is set. Gateway API does not; you must add the redirect route yourself.
+force-ssl-redirect	DIRECT	HTTPRoute RequestRedirect scheme https, statusCode 301	See manifests/envoy-gateway/10-http-to-https-redirect.yaml
+permanent-redirect	DIRECT	HTTPRoute RequestRedirect statusCode 301
+permanent-redirect-code	DIRECT	HTTPRoute RequestRedirect statusCode	Only 301 and 302 are core.
+temporal-redirect	DIRECT	HTTPRoute RequestRedirect statusCode 302
+app-root	DIRECT	HTTPRoute rule with Exact "/" match + RequestRedirect path
+upstream-vhost	DIRECT	HTTPRoute filter URLRewrite hostname
+x-forwarded-prefix	DIRECT	HTTPRoute filter RequestHeaderModifier set X-Forwarded-Prefix
+server-alias	DIRECT	Add the extra hostnames to HTTPRoute.spec.hostnames
+canary	DIRECT	HTTPRoute backendRefs with weights, or header match rules	Canary Ingresses are separate objects in ingress-nginx; merge them into one HTTPRoute.
+canary-weight	DIRECT	HTTPRoute backendRefs weight
+canary-weight-total	DIRECT	HTTPRoute backendRefs weight (weights are relative)
+canary-by-header	DIRECT	HTTPRoute rule matches.headers
+canary-by-header-value	DIRECT	HTTPRoute rule matches.headers value
+canary-by-header-pattern	POLICY	HTTPRoute header match type RegularExpression	Implementation-specific.
+canary-by-cookie	POLICY	HTTPRoute header match on Cookie (RegularExpression)	Cookie matching is done as a regex on the Cookie header.
+mirror-target	DIRECT	HTTPRoute filter RequestMirror
+mirror-request-body	INFO	RequestMirror sends the body
+proxy-read-timeout	DIRECT	HTTPRoute rules[].timeouts.backendRequest	Gateway API timeouts are per request, nginx ones are per read. Pick a value that covers the slowest full response.
+proxy-send-timeout	DIRECT	HTTPRoute rules[].timeouts.request
+proxy-connect-timeout	POLICY	Envoy Gateway BackendTrafficPolicy timeout.tcp.connectTimeout
+proxy-next-upstream	POLICY	Envoy Gateway BackendTrafficPolicy retry
+proxy-next-upstream-tries	POLICY	Envoy Gateway BackendTrafficPolicy retry.numRetries
+proxy-body-size	POLICY	Envoy Gateway ClientTrafficPolicy / BackendTrafficPolicy buffer limits	Envoy streams bodies and has no direct 1:1 "client_max_body_size". Test large uploads explicitly.
+client-body-buffer-size	INFO	Usually not needed with Envoy
+proxy-buffering	INFO	Envoy streams by default	Check SSE / long-polling endpoints still behave.
+proxy-buffer-size	INFO	Large response headers: Envoy ClientTrafficPolicy headers settings	Only if you hit "upstream sent too big header" before.
+proxy-http-version	INFO	Envoy uses HTTP/1.1 to backends by default
+backend-protocol	POLICY	HTTPS: BackendTLSPolicy. GRPC: GRPCRoute. H2C: Service appProtocol kubernetes.io/h2c
+grpc-backend	POLICY	GRPCRoute
+proxy-ssl-secret	POLICY	BackendTLSPolicy caCertificateRefs
+proxy-ssl-verify	POLICY	BackendTLSPolicy validation
+proxy-ssl-name	POLICY	BackendTLSPolicy hostname
+proxy-ssl-server-name	POLICY	BackendTLSPolicy hostname
+enable-cors	POLICY	Envoy Gateway SecurityPolicy cors (or HTTPRoute CORS filter if your version supports it)	See manifests/envoy-gateway/30-security-policy.yaml
+cors-allow-origin	POLICY	SecurityPolicy cors.allowOrigins
+cors-allow-methods	POLICY	SecurityPolicy cors.allowMethods
+cors-allow-headers	POLICY	SecurityPolicy cors.allowHeaders
+cors-expose-headers	POLICY	SecurityPolicy cors.exposeHeaders
+cors-allow-credentials	POLICY	SecurityPolicy cors.allowCredentials
+cors-max-age	POLICY	SecurityPolicy cors.maxAge
+auth-type	POLICY	Envoy Gateway SecurityPolicy basicAuth	Secret must hold the htpasswd data under key ".htpasswd". nginx used key "auth".
+auth-secret	POLICY	SecurityPolicy basicAuth.users	Re-create the secret with key ".htpasswd". SHA hashes only in Envoy; re-hash bcrypt/apr1 entries.
+auth-secret-type	POLICY	SecurityPolicy basicAuth
+auth-realm	INFO	Not configurable in most implementations
+auth-url	POLICY	Envoy Gateway SecurityPolicy extAuth.http
+auth-signin	REDESIGN	Envoy Gateway SecurityPolicy oidc, or keep oauth2-proxy behind extAuth	Redirect-to-login flows need testing end to end.
+auth-response-headers	POLICY	SecurityPolicy extAuth.headersToBackend
+auth-snippet	REDESIGN	No equivalent	Raw nginx config. Rewrite as extAuth logic.
+auth-tls-secret	POLICY	ClientTrafficPolicy tls.clientValidation (mTLS)
+auth-tls-verify-client	POLICY	ClientTrafficPolicy tls.clientValidation
+auth-tls-verify-depth	INFO	Check implementation defaults
+auth-tls-pass-certificate-to-upstream	POLICY	ClientTrafficPolicy headers.forwardClientCert
+whitelist-source-range	POLICY	Envoy Gateway SecurityPolicy authorization rules principal.clientCIDRs	Make sure the real client IP reaches Envoy (externalTrafficPolicy: Local or PROXY protocol), otherwise every request looks like the load balancer.
+allowlist-source-range	POLICY	SecurityPolicy authorization principal.clientCIDRs	Same client IP warning as above.
+denylist-source-range	POLICY	SecurityPolicy authorization action Deny
+limit-rps	POLICY	Envoy Gateway BackendTrafficPolicy rateLimit (Local)	nginx limits per client IP by default; Envoy local limits are per Envoy replica unless you add a clientSelector.
+limit-rpm	POLICY	BackendTrafficPolicy rateLimit unit Minute
+limit-connections	POLICY	BackendTrafficPolicy circuitBreaker / ClientTrafficPolicy connection limits
+limit-burst-multiplier	INFO	No direct burst knob in local rate limit
+limit-whitelist	POLICY	BackendTrafficPolicy rateLimit rule with clientSelectors
+affinity	POLICY	Envoy Gateway BackendTrafficPolicy loadBalancer ConsistentHash (cookie) or Gateway API sessionPersistence	sessionPersistence is experimental in Gateway API.
+affinity-mode	INFO	No "persistent" vs "balanced" switch
+session-cookie-name	POLICY	BackendTrafficPolicy loadBalancer.consistentHash.cookie.name
+session-cookie-path	POLICY	consistentHash.cookie attributes
+session-cookie-max-age	POLICY	consistentHash.cookie.ttl
+session-cookie-expires	POLICY	consistentHash.cookie.ttl
+upstream-hash-by	POLICY	BackendTrafficPolicy loadBalancer ConsistentHash (header / sourceIP)	nginx variables like $request_uri do not translate. Pick header or source IP.
+load-balance	POLICY	BackendTrafficPolicy loadBalancer.type
+service-upstream	INFO	Envoy Gateway routes to endpoints; Service-IP routing is a policy option
+ssl-passthrough	REDESIGN	TLSRoute (experimental channel) on a TLS Passthrough listener	Needs experimental CRDs and its own listener.
+ssl-ciphers	POLICY	ClientTrafficPolicy tls.ciphers
+ssl-prefer-server-ciphers	INFO	Check ClientTrafficPolicy tls settings
+configuration-snippet	REDESIGN	No equivalent	Raw nginx config. Read every snippet and map each line to a filter or policy. Common ones: add_header (ResponseHeaderModifier), more_set_headers, return 301 (RequestRedirect).
+server-snippet	REDESIGN	No equivalent	Raw nginx server block config. Same approach as configuration-snippet.
+stream-snippet	REDESIGN	TCPRoute / UDPRoute (experimental)
+custom-http-errors	REDESIGN	Envoy Gateway BackendTrafficPolicy responseOverride	Check your Envoy Gateway version supports responseOverride.
+default-backend	REDESIGN	Catch-all HTTPRoute rule or direct response
+modsecurity-snippet	REDESIGN	No WAF in Gateway API	Use an external WAF (Cloudflare, cloud LB WAF) or Coraza with Envoy.
+enable-modsecurity	REDESIGN	No WAF in Gateway API	Same as above.
+enable-owasp-core-rules	REDESIGN	No WAF in Gateway API	Same as above.
+enable-access-log	POLICY	EnvoyProxy telemetry.accessLog
+enable-opentelemetry	POLICY	EnvoyProxy telemetry.tracing
+enable-opentracing	POLICY	EnvoyProxy telemetry.tracing
+from-to-www-redirect	DIRECT	Separate HTTPRoute for the other hostname with RequestRedirect hostname
+preserve-trailing-slash	INFO	Check redirects keep the slash
+http2-push-preload	INFO	Removed from browsers, safe to drop
+ssl-redirect-code	INFO	RequestRedirect statusCode
+proxy-redirect-from	REDESIGN	No direct equivalent	Response Location rewriting. Fix in the app or use a Lua/ext filter.
+proxy-redirect-to	REDESIGN	No direct equivalent	See proxy-redirect-from.
+proxy-cookie-domain	REDESIGN	No direct equivalent
+proxy-cookie-path	REDESIGN	No direct equivalent
+client-header-buffer-size	INFO	Envoy header limits in ClientTrafficPolicy
+large-client-header-buffers	INFO	Envoy header limits in ClientTrafficPolicy
+satisfy	REDESIGN	No equivalent	Combine auth rules in SecurityPolicy authorization.
+global-rate-limit	POLICY	BackendTrafficPolicy rateLimit type Global (needs Redis)
+global-rate-limit-window	POLICY	BackendTrafficPolicy rateLimit Global
